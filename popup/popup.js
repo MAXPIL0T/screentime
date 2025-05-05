@@ -60,8 +60,37 @@ document.addEventListener('DOMContentLoaded', () => {
   // Clear data
   document.getElementById('clear-data').addEventListener('click', () => {
     if (confirm('Are you sure you want to clear all tracking data? This cannot be undone.')) {
+      // Destroy existing charts first
+      if (productivityChart) {
+        productivityChart.destroy();
+        productivityChart = null;
+      }
+      if (domainsChart) {
+        domainsChart.destroy();
+        domainsChart = null;
+      }
+
       chrome.storage.local.set({ activityLog: [] }, () => {
-        updateCharts();
+        // Show empty state for charts
+        const productivityCtx = document.getElementById('productivity-chart').getContext('2d');
+        const domainsCtx = document.getElementById('domains-chart').getContext('2d');
+        
+        // Clear any existing content
+        productivityCtx.clearRect(0, 0, productivityCtx.canvas.width, productivityCtx.canvas.height);
+        domainsCtx.clearRect(0, 0, domainsCtx.canvas.width, domainsCtx.canvas.height);
+        
+        // Show "No data" message
+        productivityCtx.font = '14px Arial';
+        productivityCtx.textAlign = 'center';
+        productivityCtx.fillStyle = '#666';
+        productivityCtx.fillText('No data collected yet', productivityCtx.canvas.width / 2, productivityCtx.canvas.height / 2);
+        
+        domainsCtx.font = '14px Arial';
+        domainsCtx.textAlign = 'center';
+        domainsCtx.fillStyle = '#666';
+        domainsCtx.fillText('No domain data collected yet', domainsCtx.canvas.width / 2, domainsCtx.canvas.height / 2);
+
+        // Show feedback
         const clearButton = document.getElementById('clear-data');
         const originalText = clearButton.textContent;
         clearButton.textContent = 'Cleared!';
@@ -128,6 +157,15 @@ document.addEventListener('DOMContentLoaded', () => {
   updateCharts();
 });
 
+// Helper function to format duration in seconds to human readable format
+function formatDuration(ms) {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
 // Update charts with current data
 function updateCharts() {
   chrome.storage.local.get(['activityLog'], (result) => {
@@ -142,36 +180,69 @@ function updateCharts() {
       .filter(entry => !entry.isProductive)
       .reduce((sum, entry) => sum + entry.metadata.duration, 0);
 
-    const productivityChart = new Chart(
-      document.getElementById('productivity-chart'),
-      {
-        type: 'pie',
-        data: {
-          labels: ['Productive', 'Wasted'],
-          datasets: [{
-            data: [productiveTime, wastedTime],
-            backgroundColor: ['#4CAF50', '#f44336']
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false
+    // Destroy existing charts if they exist
+    if (productivityChart) {
+      productivityChart.destroy();
+    }
+    if (domainsChart) {
+      domainsChart.destroy();
+    }
+
+    // Initialize productivity chart
+    const productivityCtx = document.getElementById('productivity-chart').getContext('2d');
+    productivityChart = new Chart(productivityCtx, {
+      type: 'pie',
+      data: {
+        labels: [
+          `Productive (${formatDuration(productiveTime)})`,
+          `Wasted (${formatDuration(wastedTime)})`
+        ],
+        datasets: [{
+          data: [productiveTime, wastedTime],
+          backgroundColor: ['#4CAF50', '#f44336']
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: {
+              boxWidth: 12
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                const value = context.raw;
+                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                const percentage = Math.round((value / total) * 100);
+                return `${context.label}: ${formatDuration(value)} (${percentage}%)`;
+              }
+            }
+          }
         }
       }
-    );
+    });
 
     // Domains chart data
     const domainStats = activityLog.reduce((stats, entry) => {
-      const domain = new URL(entry.metadata.url).hostname;
-      if (!stats[domain]) {
-        stats[domain] = { productive: 0, wasted: 0 };
+      try {
+        const domain = new URL(entry.metadata.url).hostname;
+        if (!stats[domain]) {
+          stats[domain] = { productive: 0, wasted: 0 };
+        }
+        if (entry.isProductive) {
+          stats[domain].productive += entry.metadata.duration;
+        } else {
+          stats[domain].wasted += entry.metadata.duration;
+        }
+        return stats;
+      } catch (e) {
+        console.error('Error processing URL:', entry.metadata.url);
+        return stats;
       }
-      if (entry.isProductive) {
-        stats[domain].productive += entry.metadata.duration;
-      } else {
-        stats[domain].wasted += entry.metadata.duration;
-      }
-      return stats;
     }, {});
 
     const domains = Object.keys(domainStats)
@@ -182,43 +253,64 @@ function updateCharts() {
       })
       .slice(0, 5);
 
-    const domainsChart = new Chart(
-      document.getElementById('domains-chart'),
-      {
-        type: 'bar',
-        data: {
-          labels: domains,
-          datasets: [
-            {
-              label: 'Productive Time',
-              data: domains.map(domain => Math.round(domainStats[domain].productive / 1000)),
-              backgroundColor: '#4CAF50'
-            },
-            {
-              label: 'Wasted Time',
-              data: domains.map(domain => Math.round(domainStats[domain].wasted / 1000)),
-              backgroundColor: '#f44336'
+    // Initialize domains chart
+    const domainsCtx = document.getElementById('domains-chart').getContext('2d');
+    domainsChart = new Chart(domainsCtx, {
+      type: 'bar',
+      data: {
+        labels: domains,
+        datasets: [
+          {
+            label: 'Productive Time',
+            data: domains.map(domain => domainStats[domain].productive),
+            backgroundColor: '#4CAF50'
+          },
+          {
+            label: 'Wasted Time',
+            data: domains.map(domain => domainStats[domain].wasted),
+            backgroundColor: '#f44336'
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            stacked: true,
+            ticks: {
+              maxRotation: 45,
+              minRotation: 45
             }
-          ]
+          },
+          y: {
+            stacked: true,
+            ticks: {
+              callback: function(value) {
+                return formatDuration(value);
+              }
+            }
+          }
         },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: {
-              stacked: true
-            },
-            y: {
-              stacked: true,
-              title: {
-                display: true,
-                text: 'Time (seconds)'
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: {
+              boxWidth: 12
+            }
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                const value = context.raw;
+                const datasetLabel = context.dataset.label;
+                return `${datasetLabel}: ${formatDuration(value)}`;
               }
             }
           }
         }
       }
-    );
+    });
   });
 }
 
@@ -233,22 +325,6 @@ document.getElementById('check-interval').addEventListener('input', (e) => {
     e.target.setCustomValidity('');
   }
 });
-
-// Format time duration
-function formatDuration(ms) {
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  
-  if (hours > 0) {
-    const remainingMinutes = minutes % 60;
-    return `${hours}h ${remainingMinutes}m`;
-  } else if (minutes > 0) {
-    return `${minutes}m`;
-  } else {
-    return `${seconds}s`;
-  }
-}
 
 // Initialize productivity pie chart
 function initProductivityChart(data) {
@@ -289,6 +365,16 @@ function initProductivityChart(data) {
           position: 'bottom',
           labels: {
             boxWidth: 12
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const value = context.raw;
+              const total = context.dataset.data.reduce((a, b) => a + b, 0);
+              const percentage = Math.round((value / total) * 100);
+              return `${context.label}: ${formatDuration(value)} (${percentage}%)`;
+            }
           }
         }
       }
@@ -372,6 +458,15 @@ function initDomainsChart(data) {
           position: 'bottom',
           labels: {
             boxWidth: 12
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const value = context.raw;
+              const datasetLabel = context.dataset.label;
+              return `${datasetLabel}: ${formatDuration(value)}`;
+            }
           }
         }
       }

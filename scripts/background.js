@@ -54,13 +54,25 @@ function startTracking(tabId) {
         stopTracking();
       }
       
-      // Reset current tab response if switching tabs
-      if (activeTabId !== tabId) {
-        currentTabResponses = {
-          tabId: null,
-          url: null,
-          response: null
-        };
+      // Always reset current tab response when switching tabs
+      currentTabResponses = {
+        tabId: null,
+        url: null,
+        response: null
+      };
+      
+      // Notify content script of tab switch
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          files: ['scripts/content.js']
+        });
+        
+        await chrome.tabs.sendMessage(tabId, {
+          type: 'TAB_ACTIVATED'
+        });
+      } catch (error) {
+        console.error('Error notifying content script of tab switch:', error);
       }
       
       activeTabId = tabId;
@@ -115,6 +127,13 @@ function stopTracking() {
     queueClassification(activeTabId, duration);
   }
   
+  // Reset current tab response when stopping tracking
+  currentTabResponses = {
+    tabId: null,
+    url: null,
+    response: null
+  };
+  
   isTracking = false;
   activeTabId = null;
   activeTabStartTime = null;
@@ -123,7 +142,7 @@ function stopTracking() {
 
 function getActiveDuration() {
   if (!isTracking || !activeTabStartTime || !lastActiveTime) return 0;
-  return lastActiveTime - activeTabStartTime;
+  return Math.max(0, lastActiveTime - activeTabStartTime);
 }
 
 // AI Classification
@@ -133,15 +152,15 @@ async function classifyActivity(tabId, duration) {
     const metadata = {
       url: tab.url,
       title: tab.title,
-      duration: duration,
+      duration: Math.max(0, duration), // Ensure non-negative duration
       timestamp: Date.now()
     };
 
     // Check if we have a response for this tab and URL
     if (currentTabResponses.tabId === tabId && 
-        currentTabResponses.url === tab.url && 
+        currentTabResponses.url === metadata.url && 
         currentTabResponses.response) {
-      console.log('Using previous response for current tab session');
+      console.log('Using response from current tab session');
       return {
         ...currentTabResponses.response,
         metadata
@@ -226,11 +245,17 @@ Format your response as JSON: {"isProductive": boolean, "confidence": number, "r
     };
   } catch (error) {
     console.error('Classification error:', error);
+    const errorMetadata = {
+      url: tab?.url || 'unknown',
+      title: tab?.title || 'unknown',
+      duration: duration,
+      timestamp: Date.now()
+    };
     return {
       isProductive: false,
       confidence: 0.5,
       reason: 'Error during classification',
-      metadata
+      metadata: errorMetadata
     };
   }
 }
@@ -248,18 +273,29 @@ async function processClassificationQueue() {
   const result = await classifyActivity(tabId, duration);
   
   if (result) {
-    if (result.confidence < settings.confidenceThreshold && settings.autoPrompt) {
-      // Only show clarification prompt if we don't have a response for this tab session
-      if (!currentTabResponses.response || 
-          currentTabResponses.tabId !== tabId || 
-          currentTabResponses.url !== result.metadata.url) {
-        console.log('Showing clarification prompt due to low confidence:', result.confidence);
-        chrome.tabs.sendMessage(tabId, {
+    // Only use stored response if it's for the current tab session
+    if (currentTabResponses.tabId === tabId && 
+        currentTabResponses.url === result.metadata.url && 
+        currentTabResponses.response) {
+      console.log('Using response from current tab session');
+      storeClassificationResult({
+        ...currentTabResponses.response,
+        metadata: result.metadata
+      });
+    } else if (result.confidence < settings.confidenceThreshold && settings.autoPrompt) {
+      console.log('Showing clarification prompt due to low confidence:', result.confidence);
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          files: ['scripts/content.js']
+        });
+        
+        await chrome.tabs.sendMessage(tabId, {
           type: 'SHOW_CLARIFICATION',
           data: result
         });
-      } else {
-        console.log('Using existing response for low confidence result');
+      } catch (error) {
+        console.error('Error showing clarification prompt:', error);
         storeClassificationResult(result);
       }
     } else {
@@ -305,6 +341,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     console.log('Active tab closed:', tabId);
     stopTracking();
   }
+  // Clean up stored responses for the closed tab
+  tabResponses.delete(tabId);
 });
 
 // Handle window focus changes
@@ -336,6 +374,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       console.log('User clarification:', message.data.isProductive ? 'Productive' : 'Wasted');
+      
+      // Calculate duration based on tracking state
+      let duration;
+      if (isTracking && activeTabStartTime) {
+        duration = Math.max(0, Date.now() - activeTabStartTime);
+      } else {
+        duration = message.data.metadata.duration || 0;
+      }
+      
       // Store the response for the current tab session only
       currentTabResponses = {
         tabId: sender.tab.id,
@@ -347,11 +394,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
       };
       
-      // Calculate duration if not provided
-      const duration = message.data.metadata.duration || (Date.now() - activeTabStartTime);
-      
       storeClassificationResult({
-        ...message.data,
+        isProductive: message.data.isProductive,
+        confidence: 1.0,
+        reason: 'Based on user response',
         metadata: {
           ...message.data.metadata,
           duration: duration,
@@ -359,6 +405,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         },
         isUserClarified: true
       });
+
+      // Reset tracking state after storing result
+      if (isTracking) {
+        activeTabStartTime = Date.now();
+        lastActiveTime = activeTabStartTime;
+      }
       break;
       
     case 'UPDATE_SETTINGS':
