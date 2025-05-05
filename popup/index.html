@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Productivity Tracker</title>
+  <style>
+    body {
+      width: 400px;
+      padding: 20px;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    
+    .settings-button {
+      padding: 5px 10px;
+      background: #2196F3;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    .chart-container {
+      margin-bottom: 20px;
+      position: relative;
+      height: 200px;
+    }
+    
+    .settings-panel {
+      display: none;
+      margin-top: 20px;
+      padding: 15px;
+      background: #f5f5f5;
+      border-radius: 8px;
+    }
+    
+    .settings-panel.visible {
+      display: block;
+    }
+    
+    .form-group {
+      margin-bottom: 15px;
+    }
+    
+    .form-group label {
+      display: block;
+      margin-bottom: 5px;
+    }
+    
+    .form-group input {
+      width: 100%;
+      padding: 5px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+
+    .form-group input[type="number"] {
+      width: 80px;
+    }
+
+    .form-group .input-with-unit {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .form-group .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+
+    .form-group input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+    }
+    
+    .button-group {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    
+    .save-button, .clear-button, .export-button {
+      padding: 8px 15px;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      flex: 1;
+    }
+
+    .save-button {
+      background: #4CAF50;
+    }
+    
+    .clear-button {
+      background: #f44336;
+    }
+
+    .export-button {
+      background: #2196F3;
+    }
+
+    .button-group.triple {
+      flex-wrap: wrap;
+    }
+
+    .button-group.triple button {
+      flex: 1 1 calc(33.333% - 10px);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2>Productivity Tracker</h2>
+    <button class="settings-button" id="settings-toggle">Settings</button>
+  </div>
+  
+  <div class="chart-container">
+    <canvas id="productivity-chart"></canvas>
+  </div>
+  
+  <div class="chart-container">
+    <canvas id="domains-chart"></canvas>
+  </div>
+  
+  <div class="settings-panel" id="settings-panel">
+    <div class="form-group">
+      <label for="api-key">OpenAI API Key:</label>
+      <input type="password" id="api-key" placeholder="Enter your API key">
+    </div>
+    
+    <div class="form-group">
+      <label for="confidence-threshold">Confidence Threshold:</label>
+      <input type="range" id="confidence-threshold" min="0" max="100" value="75">
+      <span id="threshold-value">75%</span>
+    </div>
+    
+    <div class="form-group">
+      <label for="check-interval">Check Interval:</label>
+      <div class="input-with-unit">
+        <input type="number" id="check-interval" min="10" max="300" value="30">
+        <span>seconds</span>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="auto-prompt" checked>
+        Show clarification prompts
+      </label>
+    </div>
+
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="pause-tracking">
+        Pause Tracking
+      </label>
+    </div>
+    
+    <div class="button-group triple">
+      <button class="save-button" id="save-settings">Save Settings</button>
+      <button class="export-button" id="export-data">Export Data</button>
+      <button class="clear-button" id="clear-data">Clear Data</button>
+    </div>
+  </div>
+  
+  <script src="../lib/chart.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
